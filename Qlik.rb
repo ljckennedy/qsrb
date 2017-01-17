@@ -3,6 +3,9 @@ require 'faraday'
 require 'faraday/detailed_logger'
 require 'json'
 
+##
+#This Class provides a wrapper to the Qlik Sense APIs.
+#It is a work in progress so not all APIs or endpoints are covered
 class QlikSense
 
   def initialize( name, cert, key, root, log=nil)
@@ -16,9 +19,6 @@ class QlikSense
     @log = log
   end
 
-  def servername()
-    @servername
-  end
 
   def certs(cert, key, root)
     #puts cert, key, root
@@ -32,6 +32,7 @@ class QlikSense
     :verify      => OpenSSL::SSL::VERIFY_PEER
     }
   end
+  private :certs
 
   def qsConn(base_uri)
     return  Faraday.new(base_uri, ssl: @ssl_options) do |faraday|
@@ -50,7 +51,11 @@ class QlikSense
       faraday.use  Faraday::Adapter::HTTPClient
     end
   end
+  private :qsConn
 
+  # Connect to qlik sense as domainName\userName .  Will return 'about' info.
+  #
+  # NB:  If the user does not exist, they will be created.
   def connectAsUser(userName, domainName)
     conn = qsConn(@base_uri_qrs)
     conn.headers[:"X-Qlik-User"] = "UserDirectory="+domainName+";UserID="+userName
@@ -62,6 +67,7 @@ class QlikSense
     return response.body
   end
 
+  #Will return true if Qlik Sense is up, false if down.  Note this is the only method which will work without correct certificates.
   def isSenseUp()
     conn = qsConn(@base_uri_qps)
     path="/qps/user"
@@ -75,18 +81,45 @@ class QlikSense
   end
 
   def get_generic_filter(path, fparam, fop, fval)
-  conn = qsConn(@base_uri_qrs)
-  path=path
-  response = conn.get do |req|
-    req.url path
-    if !fparam.nil?
-      req.params['filter'] = fparam+" "+fop+" "+"'"+fval+"'"
-    end
-    req.params['xrfkey'] = @xrf
-    end
-      return response
+  # conn = qsConn(@base_uri_qrs)
+  # path=path
+  # response = conn.get do |req|
+  #   req.url path
+  #   if !fparam.nil?
+  #     req.params['filter'] = fparam+" "+fop+" "+"'"+fval+"'"
+  #   end
+  #   req.params['xrfkey'] = @xrf
+  #   end
+  #     return response
+  return get_generic_param(path, 'filter', fparam, fop, fval)
   end
   private :get_generic_filter
+
+  def get_generic(path)
+    # conn = qsConn(@base_uri_qrs)
+    # path = path
+    # response = conn.get do |req|
+    #   req.url path
+    #   req.params['xrfkey'] = @xrf
+    # end
+    # return response
+    return get_generic_param(path, nil, fparam, fop, fval)
+  end
+  private :get_generic
+
+  def get_generic_param(path, paramName, param, op, val)
+    conn = qsConn(@base_uri_qrs)
+    path=path
+    response = conn.get do |req|
+      req.url path
+      if !param.nil?
+        req.params[paramName] = param+" "+op+" "+"'"+val+"'"
+      end
+      req.params['xrfkey'] = @xrf
+      end
+        return response
+    end
+  private :get_generic_param
 
   def get_user(param = nil, val = nil)
     return  get_generic_filter("qrs/user", param, 'eq', val).body
@@ -100,16 +133,11 @@ class QlikSense
     return  get_generic_filter("qrs/app", param, 'eq', val).body
   end
 
-  def get_generic(path)
-    conn = qsConn(@base_uri_qrs)
-    path = path
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-    end
-    return response
+  def get_stream(param = nil, val = nil)
+    return  get_generic_filter("qrs/stream", param, 'eq', val).body
   end
-  private :get_generic
+
+
 
   def get_about()
     # conn = qsConn(@base_uri_qrs)
@@ -122,19 +150,36 @@ class QlikSense
   end
 
   def get_aboutDiscription()
-    # conn = qsConn(@base_uri_qrs)
-    # path = 'qrs/about/api/description'
-    # response = conn.get do |req|
-    #   req.url path
-    #   req.params['xrfkey'] = @xrf
-    # end
     return get_generic('qrs/about/api/description').body
   end
 
+  def get_custompropertydefinition()
+    return get_generic('qrs/custompropertydefinition').body
+  end
+
+  def get_tag()
+    return get_generic('qrs/tag').body
+  end
+
+  def get_task()
+    return get_generic('qrs/task').body
+  end
+
+  def get_rule()
+    return get_generic('qrs/systemrule').body
+  end
+
+  def get_userdirectory()
+    return get_generic('qrs/userdirectory').body
+  end
+
+  def get_extension()
+    return get_generic('qrs/extension ').body
+  end
   def get_aboutDefault(section, listentries=false)
     conn = qsConn(@base_uri_qrs)
     if section == '' then path = 'qrs/about/api/default'
-    else path = 'qrs/about/api/default'+'/'+section
+    else path = 'qrs/about/api/default/'+section
     end
     response = conn.get do |req|
       req.url path
