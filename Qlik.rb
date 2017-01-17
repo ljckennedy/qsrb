@@ -1,10 +1,11 @@
 require 'securerandom'
 require 'faraday'
+require 'faraday/detailed_logger'
 require 'json'
 
 class QlikSense
 
-  def initialize( name, cert, key, root)
+  def initialize( name, cert, key, root, log=nil)
     @servername=name
     @base_uri_qrs = "https://"+@servername+":4242/"
     @base_uri_qps = "https://"+@servername+"/"
@@ -12,6 +13,7 @@ class QlikSense
     #headers()
     certs(cert, key, root)
     #qsConn()
+    @log = log
   end
 
   def servername()
@@ -34,9 +36,11 @@ class QlikSense
   def qsConn(base_uri)
     return  Faraday.new(base_uri, ssl: @ssl_options) do |faraday|
       faraday.request  :url_encoded
-      #faraday.response :detailed_logger
-      #faraday.response :logger
-
+      if @log == 'debug'
+        faraday.response :detailed_logger
+      elsif @log == 'log'
+        faraday.response :logger
+      end
       #faraday.basic_auth("https://"+"@servername", 'lkennedy\qservice', 'xxxxx')
       faraday.headers[:"X-Qlik-XrfKey"] = @xrf
       faraday.headers[:Accept] = "application/json"
@@ -47,6 +51,16 @@ class QlikSense
     end
   end
 
+  def connectAsUser(userName, domainName)
+    conn = qsConn(@base_uri_qrs)
+    conn.headers[:"X-Qlik-User"] = "UserDirectory="+domainName+";UserID="+userName
+    path = 'qrs/about'
+    response = conn.get do |req|
+      req.url path
+      req.params['xrfkey'] = @xrf
+    end
+    return response.body
+  end
 
   def isSenseUp()
     conn = qsConn(@base_uri_qps)
@@ -60,25 +74,61 @@ class QlikSense
     end
   end
 
-  def get_user()
-    conn = qsConn(@base_uri_qps)
-    path="/qps/user"
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
+  def get_generic_filter(path, fparam, fop, fval)
+  conn = qsConn(@base_uri_qrs)
+  path=path
+  response = conn.get do |req|
+    req.url path
+    if !fparam.nil?
+      req.params['filter'] = fparam+" "+fop+" "+"'"+fval+"'"
     end
-      return response.body
+    req.params['xrfkey'] = @xrf
+    end
+      return response
+  end
+  private :get_generic_filter
+
+  def get_user(param = nil, val = nil)
+    return  get_generic_filter("qrs/user", param, 'eq', val).body
   end
 
-  def get_about()
+  def get_dataconnection(param = nil, val = nil)
+    return  get_generic_filter("qrs/dataconnection", param, 'eq', val).body
+  end
+
+  def get_app(param = nil, val = nil)
+    return  get_generic_filter("qrs/app", param, 'eq', val).body
+  end
+
+  def get_generic(path)
     conn = qsConn(@base_uri_qrs)
-    path = 'qrs/about'
+    path = path
     response = conn.get do |req|
       req.url path
       req.params['xrfkey'] = @xrf
     end
+    return response
+  end
+  private :get_generic
 
-    return response.body
+  def get_about()
+    # conn = qsConn(@base_uri_qrs)
+    # path = 'qrs/about'
+    # response = conn.get do |req|
+    #   req.url path
+    #   req.params['xrfkey'] = @xrf
+    # end
+    return get_generic('qrs/about').body
+  end
+
+  def get_aboutDiscription()
+    # conn = qsConn(@base_uri_qrs)
+    # path = 'qrs/about/api/description'
+    # response = conn.get do |req|
+    #   req.url path
+    #   req.params['xrfkey'] = @xrf
+    # end
+    return get_generic('qrs/about/api/description').body
   end
 
   def get_aboutDefault(section, listentries=false)
@@ -94,16 +144,7 @@ class QlikSense
     return response.body
   end
 
-  def get_aboutDiscription()
-    conn = qsConn(@base_uri_qrs)
-    path = 'qrs/about/api/description'
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-    end
 
-    return response.body
-  end
   # def get_servicestate()
   #   conn = qsConn(@base_uri_qrs)
   #   path = 'qrs/servicestate'
@@ -120,17 +161,17 @@ class QlikSense
   #     print ('Running')
   #   end
   # end
-    def get_appState(id)
-      conn = qsConn(@base_uri_qrs)
-      path = '/qrs/app/'+id+'/state'
-      response = conn.get do |req|
-        req.url path
-        req.params['xrfkey'] = @xrf
-      end
-      return response.body
+  def get_appState(id)
+    conn = qsConn(@base_uri_qrs)
+    path = '/qrs/app/'+id+'/state'
+    response = conn.get do |req|
+      req.url path
+      req.params['xrfkey'] = @xrf
     end
+    return response.body
+  end
 
-    def get_appExportId(id)
+  def get_appExportId(id)
       conn = qsConn(@base_uri_qrs)
       path = '/qrs/app/'+id+'/export'
       response = conn.get do |req|
@@ -153,7 +194,6 @@ class QlikSense
   end
 
 end #class
-
 
 class RCode
     attr_accessor :code
