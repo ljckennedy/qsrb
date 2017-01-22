@@ -1,6 +1,5 @@
 require 'securerandom'
-require 'faraday'
-require 'faraday/detailed_logger'
+require 'HTTPClient'
 require 'json'
 #require 'tempfile'
 #require './qsrb/NetHttpStream'
@@ -14,7 +13,11 @@ class QlikSense
     @base_uri_qrs = "https://"+@servername+":4242/"
     @base_uri_qps = "https://"+@servername+"/"
     @xrf = SecureRandom.hex(16)[0..15] #'acbdefghijklmnop'
-    #headers()
+    @extheader = {
+      "X-Qlik-XrfKey" => @xrf,
+      "Accept" => "application/json",
+      "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
+      "Content-Type" => "application/json"}
     certs(cert, key, root)
     #qsConn()
     @log = log
@@ -23,68 +26,37 @@ class QlikSense
 
   def certs(cert, key, root)
     #puts cert, key, root
-    cert = OpenSSL::X509::Certificate.new(File.read(cert))
-    key = OpenSSL::PKey::RSA.new(File.read(key))
-    #root = root
-    @ssl_options = {
-    :client_cert => cert,
-    :client_key  => key,
-    :ca_file     => root,
-    :verify      => OpenSSL::SSL::VERIFY_PEER
-    }
+    @cert = cert
+    @key = key
+    @root = root
+
   end
   private :certs
 
   def qsConn(base_uri)
-    return  Faraday.new(base_uri, ssl: @ssl_options) do |faraday|
-      faraday.adapter :httpclient do |client| # yields HTTPClient
-          client.keep_alive_timeout = 60
-          client.ssl_config.timeout = 60
-          #client.chunk_size = 64*1024
-      end
-      faraday.request  :url_encoded
-      faraday.request :multipart
-      if @log == 'debug'
-        faraday.response :detailed_logger
-      elsif @log == 'log'
-        faraday.response :logger
-      end
-      faraday.headers[:"X-Qlik-XrfKey"] = @xrf
-      faraday.headers[:Accept] = "application/json"
-      faraday.headers[:"X-Qlik-User"] = "UserDirectory=Internal;UserID=sa_repository"
-      faraday.headers[:"Content-Type"] = "application/json"
-      #faraday.adapter  Faraday.default_adapter
-      faraday.use  Faraday::Adapter::HTTPClient
-      end
+    client = HTTPClient.new()
+    client.ssl_config.set_trust_ca(@root)
+    client.ssl_config.set_client_cert_file(@cert, @key)
+    #client.set_auth(@base_uri, 'lkennedy\qservice', 'Password15')
+
+    return client
   end
   private :qsConn
 
-  # Connect to qlik sense as domainName\userName .  Will return 'about' info.
-  #
-  # NB:  If the user does not exist, they will be created.
-  def connectAsUser(userName, domainName)
-    conn = qsConn(@base_uri_qrs)
-    conn.headers[:"X-Qlik-User"] = "UserDirectory="+domainName+";UserID="+userName
-    path = 'qrs/about'
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-    end
-    return response.body
-  end
+
 
   #Will return true if Qlik Sense is up, false if down.  Note this is the only method which will work without correct certificates.
-  def isSenseUp()
-    conn = qsConn(@base_uri_qps)
-    path="/qps/user"
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-    end
-    if response.status == 200 then return true
-      else return false
-    end
-  end
+  # def isSenseUp()
+  #   conn = qsConn(@base_uri_qps)
+  #   path="/qps/user"
+  #   response = conn.get do |req|
+  #     req.url path
+  #     req.params['xrfkey'] = @xrf
+  #   end
+  #   if response.status == 200 then return true
+  #     else return false
+  #   end
+  # end
 
   def get_generic_filter(path, fparam, fop, fval)
   # conn = qsConn(@base_uri_qrs)
@@ -115,21 +87,49 @@ class QlikSense
 
   def get_generic_param(path, paramName, param, op, val)
     conn = qsConn(@base_uri_qrs)
-    path=path
-    response = conn.get do |req|
-      req.url path
-      if !param.nil?
-        req.params[paramName] = param+" "+op+" "+"'"+val+"'"
+    https_url =@base_uri_qrs+path
+    if !param.nil?
+      if param == 'filter' then
+        query = {paramName => param+" "+op+" "+"'"+val+"'" , 'xrfkey' => @xrf}
+      else
+        query = {paramName => param, 'xrfkey' => @xrf}
       end
-      req.params['xrfkey'] = @xrf
-      #req.headers['Content-Type'] = 'multipart/form-data'
+    else
+      query = {'xrfkey' => @xrf}
     end
-    return response
+    #puts https_url, query , @extheader
+    puts
+    return conn.get(https_url, query, @extheader)
   end
   private :get_generic_param
 
+  def get_download(path, fname)
+    conn = qsConn(@base_uri_qrs)
+    https_url =@base_uri_qrs+path
+    query = {'xrfkey' => @xrf}
+    appFile = File.open(fname, "wb")
+    conn.get(https_url, query, @extheader) do |chunk|
+        appFile.write(chunk)
+    end
+    appFile.close
+    return true
+  end
+  private :get_download
+
   def get_user(param = nil, val = nil)
     return  get_generic_filter("qrs/user", param, 'eq', val).body
+  end
+
+  # Connect to qlik sense as domainName\userName .  Will return 'about' info.
+  #
+  # NB:  If the user does not exist, they will be created.
+  def connectAsUser(userName, domainName)
+    @extheader = {
+      "X-Qlik-XrfKey" => @xrf,
+      "Accept" => "application/json",
+      "X-Qlik-User" => "UserDirectory="+domainName+";UserID="+userName,
+      "Content-Type" => "application/json"}
+    return get_generic('qrs/about').body
   end
 
   def get_dataconnection(param = nil, val = nil)
@@ -147,12 +147,6 @@ class QlikSense
 
 
   def get_about()
-    # conn = qsConn(@base_uri_qrs)
-    # path = 'qrs/about'
-    # response = conn.get do |req|
-    #   req.url path
-    #   req.params['xrfkey'] = @xrf
-    # end
     return get_generic('qrs/about').body
   end
 
@@ -184,54 +178,29 @@ class QlikSense
     return get_generic('qrs/extension ').body
   end
   def get_aboutDefault(section, listentries=false)
-    conn = qsConn(@base_uri_qrs)
-    if section == '' then path = 'qrs/about/api/default'
-    else path = 'qrs/about/api/default/'+section
+    if section == '' then
+      path = 'qrs/about/api/default'
+    else
+      path = 'qrs/about/api/default/'+section
     end
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-      req.params['listentries'] = listentries
-    end
-    return response.body
+    return get_generic_param(path, 'listentries', listentries, nil, nil).body
   end
 
 
-  # def get_servicestate()
-  #   conn = qsConn(@base_uri_qrs)
-  #   path = 'qrs/servicestate'
-  #   response = conn.get do |req|
-  #     req.url path
-  #     req.params['xrfkey'] = @xrf
-  #   end
-  #   puts "\n", response.body
-  #   if response.body == 0 then
-  #     print ('Initializing')
-  #   elsif response.body == 1
-  #     print ('Certificates not installed')
-  #   else
-  #     print ('Running')
-  #   end
-  # end
   def get_appState(id)
-    conn = qsConn(@base_uri_qrs)
-    path = '/qrs/app/'+id+'/state'
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-    end
-    return response.body
+    return get_generic('qrs/app/'+id+'/state').body
   end
 
   def get_appExportId(id)
-    return get_generic('/qrs/app/'+id+'/export').body
+    return get_generic('qrs/app/'+id+'/export').body
   end
 
   def get_appExport(id, fname)
     t = get_appExportId(id)
     #pp t
     ticket = JSON.parse(t)['value']
-    return get_generic('/qrs/download/app/'+id+'/'+ticket+'/'+fname).body
+    #return get_generic('qrs/download/app/'+id+'/'+ticket+'/'+fname).body
+    return get_download('qrs/download/app/'+id+'/'+ticket+'/'+fname, fname)
   end
 
 end #class
