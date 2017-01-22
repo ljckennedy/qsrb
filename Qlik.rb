@@ -2,7 +2,8 @@ require 'securerandom'
 require 'faraday'
 require 'faraday/detailed_logger'
 require 'json'
-
+#require 'tempfile'
+#require './qsrb/NetHttpStream'
 ##
 #This Class provides a wrapper to the Qlik Sense APIs.
 #It is a work in progress so not all APIs or endpoints are covered
@@ -36,20 +37,25 @@ class QlikSense
 
   def qsConn(base_uri)
     return  Faraday.new(base_uri, ssl: @ssl_options) do |faraday|
+      faraday.adapter :httpclient do |client| # yields HTTPClient
+          client.keep_alive_timeout = 60
+          client.ssl_config.timeout = 60
+          #client.chunk_size = 64*1024
+      end
       faraday.request  :url_encoded
+      faraday.request :multipart
       if @log == 'debug'
         faraday.response :detailed_logger
       elsif @log == 'log'
         faraday.response :logger
       end
-      #faraday.basic_auth("https://"+"@servername", 'lkennedy\qservice', 'xxxxx')
       faraday.headers[:"X-Qlik-XrfKey"] = @xrf
       faraday.headers[:Accept] = "application/json"
       faraday.headers[:"X-Qlik-User"] = "UserDirectory=Internal;UserID=sa_repository"
       faraday.headers[:"Content-Type"] = "application/json"
       #faraday.adapter  Faraday.default_adapter
       faraday.use  Faraday::Adapter::HTTPClient
-    end
+      end
   end
   private :qsConn
 
@@ -103,7 +109,7 @@ class QlikSense
     #   req.params['xrfkey'] = @xrf
     # end
     # return response
-    return get_generic_param(path, nil, fparam, fop, fval)
+    return get_generic_param(path, nil, nil, nil, nil)
   end
   private :get_generic
 
@@ -116,9 +122,10 @@ class QlikSense
         req.params[paramName] = param+" "+op+" "+"'"+val+"'"
       end
       req.params['xrfkey'] = @xrf
-      end
-        return response
+      #req.headers['Content-Type'] = 'multipart/form-data'
     end
+    return response
+  end
   private :get_generic_param
 
   def get_user(param = nil, val = nil)
@@ -217,25 +224,14 @@ class QlikSense
   end
 
   def get_appExportId(id)
-      conn = qsConn(@base_uri_qrs)
-      path = '/qrs/app/'+id+'/export'
-      response = conn.get do |req|
-        req.url path
-        req.params['xrfkey'] = @xrf
-      end
-    return response.body
+    return get_generic('/qrs/app/'+id+'/export').body
   end
 
   def get_appExport(id, fname)
-    ticket = JSON.parse(get_appExportId(id))['value']
-    puts ticket
-    conn = qsConn(@base_uri_qrs)
-    path = '/qrs/download/app/'+id+'/'+ticket+'/'+fname
-    response = conn.get do |req|
-      req.url path
-      req.params['xrfkey'] = @xrf
-    end
-    return response.body
+    t = get_appExportId(id)
+    #pp t
+    ticket = JSON.parse(t)['value']
+    return get_generic('/qrs/download/app/'+id+'/'+ticket+'/'+fname).body
   end
 
 end #class
