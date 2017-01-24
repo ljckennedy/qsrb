@@ -122,7 +122,29 @@ class QlikSense
   end
   private :get_download
 
+  def post_file(https_url, fFile, contentType)
+    conn = qsConn()
+    @extheader = {
+      "X-Qlik-XrfKey" => @xrf,
+      "Accept" => "application/json",
+      "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
+      "Connection" => "Keep-Alive",
+      'Content-Type' => contentType}
+    #puts https_url, query , @extheader
+    File.open(fFile, "rb") do |file|
+      #body = {  file,  }
+        conn.post(https_url, file, @extheader)
+        #https_url, query, @extheader
+    end
+  end
+  private :post_file
 
+  def post_generic(https_url, body, header)
+    conn = qsConn()
+    return conn.post(https_url, body, header)
+
+  end
+  private :post_generic
 
   def get_user(param = nil, val = nil)
     return  get_generic_filter("qrs/user", param, 'eq', val).body
@@ -240,22 +262,7 @@ class QlikSense
     return get_download('qrs/download/app/'+id+'/'+ticket+'/'+fname, fname)
   end
 
-  def post_file(https_url, fFile, contentType)
-    conn = qsConn()
-    @extheader = {
-      "X-Qlik-XrfKey" => @xrf,
-      "Accept" => "application/json",
-      "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
-      "Connection" => "Keep-Alive",
-      'Content-Type' => contentType}
-    #puts https_url, query , @extheader
-    File.open(fFile, "rb") do |file|
-      #body = {  file,  }
-        conn.post(https_url, file, @extheader)
-        #https_url, query, @extheader
-    end
-  end
-  private :post_file
+
 
   def uploadfile(fName, fFile)
     conn = qsConn()
@@ -265,8 +272,49 @@ class QlikSense
     post_file(https_url, fFile, 'application/vnd.qlik.sense.app')
   end
 
+  def get_Appid(appName)
+    appId = 0
+    apps = JSON.parse(get_app())
+    apps.each do |app|
+      if app['name'] == appName then
+        appId = app['id']
+        #pp app
+      end
+    end
+    return appId
+  end
+
+
+
+
+  def copyApp(app1, app2, xQlikUser=nil)
+    if !xQlikUser.nil? then
+    extheader = {
+      "X-Qlik-XrfKey" => @xrf,
+      "Accept" => "application/json",
+      "X-Qlik-User" => xQlikUser,
+      "Connection" => "Keep-Alive",
+      'Content-Type' => "text/plain",
+      "Content-Length" => "0"
+    }
+    else
+      extheader = {
+        "X-Qlik-XrfKey" => @xrf,
+        "Accept" => "application/json",
+        "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
+        "Connection" => "Keep-Alive",
+        'Content-Type' => "text/plain",
+        "Content-Length" => "0"
+      }
+    end
+      id = get_Appid(app1)
+      https_url =@base_uri_qrs+'qrs/app/'+id+'/copy?name='+app2+'&xrfkey='+@xrf
+      pp post_generic(https_url, '', extheader)
+  end
+
   #Upload a file to an app content library, identified by {id}, and store the file in accordance to the path specified in {externalpath} (for example, image.png).
   # {overwrite} is optional and set to false by default.
+  # UNTESTED
   def uploadAppContent(libraryId, fFile,  contentType, overwrite='false')
     conn = qsConn()
     f= File.basename fFile
@@ -277,6 +325,8 @@ class QlikSense
     pp post_file(https_url, fFile, contentType)
   end
 
+  #Delete a file, stored as {externalpath}, from an app content library, identified by {id}.
+  # UNTESTED
   def deleteAppContent(libraryId, fFile)
     conn = qsConn()
     https_url =@base_uri_qrs+'qrs/appcontent/'+libraryId+'/deletecontent?externalpath='+fFile+'&xrfkey='+@xrf
@@ -284,6 +334,9 @@ class QlikSense
     delete_generic(https_url)
   end
 
+  #Upload a file to a content library, identified by {libname}, and store the file in accordance to the path specified in {externalpath}
+  #(for example, image.png). {overwrite} is optional and set to false by default.
+  #A content library holds static content (for example, image and video files) that can be used in Qlik Sense.
   def uploadContent(libraryName, fFile,  contentType, overwrite='false')
     #conn = qsConn()
     f= File.basename fFile
@@ -294,22 +347,24 @@ class QlikSense
     post_file(https_url, fFile, contentType)
   end
 
+  #Delete a file, stored as {externalpath}, from a content library, identified by {libname}.
   def deleteContent(libraryName, fFile)
     #conn = qsConn()
     https_url =@base_uri_qrs+'qrs/contentlibrary/'+libraryName+'/deletecontent?externalpath='+fFile+'&xrfkey='+@xrf
+
     puts https_url
     delete_generic(https_url)
   end
 
-  # App content: Upload file
-  # App content: Delete content
+  #Get information about the application content quota.
+  def appcontentquota()
+    return get_generic('qrs/appcontentquota/ful').body
+  end
   # App content quota: Get
   # App content quota: Update
   # App: Get hub information
   # App: Get hub list
   # App: Get state
-  # App: Export app (call 1 of 2)
-  # App: Export app (call 2 of 2)
   # App: Import app
   # App: Make copy
   # App: Migrate
@@ -327,20 +382,18 @@ class QlikSense
   # Certificate distribution: Redistribute certificate
   # Certificate installation: Install certificate
   # Certificate installation: Setup ping
-  # Content library: Upload file
-  # Content library: Delete content
-  # Data market: Get license
-  # Data market: Add license
-  # Data market: Update license
-  # Data market: Add license bundle
-  # Data market: Get terms acceptance
+      # Data market: Get license
+      # Data market: Add license
+      # Data market: Update license
+      # Data market: Add license bundle
+      # Data market: Get terms acceptance
   # Engine service: Get local engine service
-  # Extension: Get schemas
+      # Extension: Get schemas
   # Extension: Upload extension
-  # Extension: Create extension with schema
-  # Extension: Delete extension by name
-  # Extension: Create or update a file in an extension
-  # Extension: Delete a file from an extension
+      # Extension: Create extension with schema
+      # Extension: Delete extension by name
+      # Extension: Create or update a file in an extension
+      # Extension: Delete a file from an extension
   # License: Download LEF
   # License: Get
   # License: Add
@@ -353,7 +406,7 @@ class QlikSense
   # Notification: Add change subscription
   # Notification: Remove change subscription
   # Notification: Get changes since
-  # Ping: Ping
+      # Ping: Ping
   # Printing Service: Get local printing service
   # Proxy service: Get local proxy service
   # Reload task: Add reload task bundle
@@ -379,17 +432,17 @@ class QlikSense
   # Server node configuration: Get local
   # Service registration: Start service registration
   # Service status: Get service state
-  # Shared content: Delete content
-  # Shared content: Upload file
-  # Static content: Enumerate files
-  # Synchronization: Create snapshot
-  # Synchronization: Restore snapshot
-  # Synchronization rule audit: Get audit rules
-  # Synchronization rule audit: Preview audit rules
-  # Synchronization rule audit: Get audit rules matrix
-  # Synchronization rule: Get linked nodes
-  # Synchronization rule: Get linked objects
-  # System rule: Get associated rules
+      # Shared content: Delete content
+      # Shared content: Upload file
+      # Static content: Enumerate files
+      # Synchronization: Create snapshot
+      # Synchronization: Restore snapshot
+      # Synchronization rule audit: Get audit rules
+      # Synchronization rule audit: Preview audit rules
+      # Synchronization rule audit: Get audit rules matrix
+      # Synchronization rule: Get linked nodes
+      # Synchronization rule: Get linked objects
+      # System rule: Get associated rules
   # Task: Start
   # Task: Start asynchronous
   # Task: Start by name
