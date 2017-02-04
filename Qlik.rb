@@ -8,37 +8,62 @@ require 'json'
 #It is a work in progress so not all APIs or endpoints are covered
 class QlikSense
 
-  def initialize( name, cert, key, root, log=nil)
+  def initialize( name: nil, ignore_ssl: false, root: nil, user: nil, pass: nil, cert: nil, key:nil, log: nil)
     @servername=name
-    @base_uri_qrs = "https://"+@servername+":4242/"
-    @base_uri_qps = "https://"+@servername+"/"
+    @base_uri_qrs = "https://"+@servername+":4242"
+    @base_uri_qps = "https://"+@servername
     @xrf = SecureRandom.hex(16)[0..15] #'acbdefghijklmnop'
     @extheader = {
       "X-Qlik-XrfKey" => @xrf,
       "Accept" => "application/json",
+      "User-Agent" => 'Mozilla/2.0 (compatible; MSIE 1.0; Windows 95)',
       "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
       "Content-Type" => "application/json"}
-    certs(cert, key, root)
-    #qsConn()
+    certs(ignore_ssl, cert, key, root)
     @log = log
+    @user = user
+    @pass = pass
   end
 
 
-  def certs(cert, key, root)
+  def certs(ignore_ssl, cert, key, root)
     #puts cert, key, root
     @cert = cert
     @key = key
     @root = root
+    @ignore_ssl =ignore_ssl
 
   end
   private :certs
 
   def qsConn()
     client = HTTPClient.new()
-    client.ssl_config.set_trust_ca(@root)
-    client.ssl_config.set_client_cert_file(@cert, @key)
-    #client.set_auth(@base_uri, 'lkennedy\qservice', 'Password15')
-
+    if !@root.nil?  then
+      client.ssl_config.set_trust_ca(@root)
+    end
+    if !@cert.nil? then
+      client.ssl_config.set_client_cert_file(@cert, @key)
+    end
+    if !@ignore_ssl then
+      client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    else
+      client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
+    end
+    if !@user.nil? then
+        @base_uri = @base_uri_qps
+        client.set_auth(nil, @user, @pass)
+        path = '/qrs/about'
+        query = {'xrfkey' => @xrf}
+        https_url = @base_uri+path
+        t = client.get(https_url, query, @extheader, :follow_redirect => true)
+        pp @user, @pass, https_url
+        redirect = t.http_header.request_uri.to_s
+        r = client.get(redirect, query, @extheader, :follow_redirect => true)
+        pp "CONNECTED: ", t.status_code, t.body, r.status_code, r.body, redirect
+      else
+        @base_uri = @base_uri_qrs
+      end
+      puts @base_uri
     return client
   end
   private :qsConn
@@ -87,7 +112,10 @@ class QlikSense
 
   def get_generic_param(path, paramName, param, op, val)
     conn = qsConn()
-    https_url =@base_uri_qrs+path
+    if path[0] != '/' then
+      path = '/'+path
+    end
+    https_url =@base_uri+path
     if !param.nil?
       if param == 'filter' then
         query = {paramName => param+" "+op+" "+"'"+val+"'" , 'xrfkey' => @xrf}
@@ -97,7 +125,7 @@ class QlikSense
     else
       query = {'xrfkey' => @xrf}
     end
-    #puts https_url, query , @extheader
+    puts https_url, query , @extheader
     puts
     return conn.get(https_url, query, @extheader)
   end
@@ -111,7 +139,10 @@ class QlikSense
 
   def get_download(path, fname)
     conn = qsConn()
-    https_url =@base_uri_qrs+path
+    if path[0] != '/' then
+      path = '/'+path
+    end
+    https_url =@base_uri+path
     query = {'xrfkey' => @xrf}
     appFile = File.open(fname, "wb")
     conn.get(https_url, query, @extheader) do |chunk|
@@ -127,6 +158,7 @@ class QlikSense
     @extheader = {
       "X-Qlik-XrfKey" => @xrf,
       "Accept" => "application/json",
+      "User-Agent" => 'Mozilla/2.0 (compatible; MSIE 1.0; Windows 95)',
       "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
       "Connection" => "Keep-Alive",
       'Content-Type' => contentType}
@@ -157,6 +189,7 @@ class QlikSense
     @extheader = {
       "X-Qlik-XrfKey" => @xrf,
       "Accept" => "application/json",
+      "User-Agent" => 'Mozilla/2.0 (compatible; MSIE 1.0; Windows 95)',
       "X-Qlik-User" => "UserDirectory="+domainName+";UserID="+userName,
       "Content-Type" => "application/json"}
     return get_generic('qrs/about').body
@@ -267,7 +300,7 @@ class QlikSense
   def uploadfile(fName, fFile)
     conn = qsConn()
     # Note, can't pass query,so hand code url
-    https_url =@base_uri_qrs+'qrs/app/upload?name='+fName+'&xrfkey='+@xrf
+    https_url =@base_uri+'/qrs/app/upload?name='+fName+'&xrfkey='+@xrf
     puts https_url
     post_file(https_url, fFile, 'application/vnd.qlik.sense.app')
   end
@@ -292,6 +325,7 @@ class QlikSense
     extheader = {
       "X-Qlik-XrfKey" => @xrf,
       "Accept" => "application/json",
+      "User-Agent" => 'Mozilla/2.0 (compatible; MSIE 1.0; Windows 95)',
       "X-Qlik-User" => xQlikUser,
       "Connection" => "Keep-Alive",
       'Content-Type' => "text/plain",
@@ -301,6 +335,7 @@ class QlikSense
       extheader = {
         "X-Qlik-XrfKey" => @xrf,
         "Accept" => "application/json",
+        "User-Agent" => 'Mozilla/2.0 (compatible; MSIE 1.0; Windows 95)',
         "X-Qlik-User" => "UserDirectory=Internal;UserID=sa_repository",
         "Connection" => "Keep-Alive",
         'Content-Type' => "text/plain",
@@ -308,8 +343,8 @@ class QlikSense
       }
     end
       id = get_Appid(app1)
-      https_url =@base_uri_qrs+'qrs/app/'+id+'/copy?name='+app2+'&xrfkey='+@xrf
-      pp post_generic(https_url, '', extheader)
+      https_url =@base_uri+'/qrs/app/'+id+'/copy?name='+app2+'&xrfkey='+@xrf
+      return post_generic(https_url, '', extheader)
   end
 
   #Upload a file to an app content library, identified by {id}, and store the file in accordance to the path specified in {externalpath} (for example, image.png).
@@ -320,16 +355,16 @@ class QlikSense
     f= File.basename fFile
     puts libraryId, fFile,  contentType, overwrite, f
 
-    https_url =@base_uri_qrs+'qrs/appcontent/'+libraryId+'/uploadfile?externalpath='+f+'&overwrite='+overwrite+'&xrfkey='+@xrf
+    https_url =@base_uri+'/qrs/appcontent/'+libraryId+'/uploadfile?externalpath='+f+'&overwrite='+overwrite+'&xrfkey='+@xrf
     puts https_url
-    pp post_file(https_url, fFile, contentType)
+    return post_file(https_url, fFile, contentType)
   end
 
   #Delete a file, stored as {externalpath}, from an app content library, identified by {id}.
   # UNTESTED
   def deleteAppContent(libraryId, fFile)
     conn = qsConn()
-    https_url =@base_uri_qrs+'qrs/appcontent/'+libraryId+'/deletecontent?externalpath='+fFile+'&xrfkey='+@xrf
+    https_url =@base_uri+'/qrs/appcontent/'+libraryId+'/deletecontent?externalpath='+fFile+'&xrfkey='+@xrf
     puts https_url
     delete_generic(https_url)
   end
@@ -342,7 +377,7 @@ class QlikSense
     f= File.basename fFile
     puts libraryName, fFile,  contentType, overwrite, f
 
-    https_url =@base_uri_qrs+'qrs/contentlibrary/'+libraryName+'/uploadfile?externalpath='+f+'&overwrite='+overwrite+'&xrfkey='+@xrf
+    https_url =@base_uri+'/qrs/contentlibrary/'+libraryName+'/uploadfile?externalpath='+f+'&overwrite='+overwrite+'&xrfkey='+@xrf
     puts https_url
     post_file(https_url, fFile, contentType)
   end
@@ -350,7 +385,7 @@ class QlikSense
   #Delete a file, stored as {externalpath}, from a content library, identified by {libname}.
   def deleteContent(libraryName, fFile)
     #conn = qsConn()
-    https_url =@base_uri_qrs+'qrs/contentlibrary/'+libraryName+'/deletecontent?externalpath='+fFile+'&xrfkey='+@xrf
+    https_url =@base_uri+'/qrs/contentlibrary/'+libraryName+'/deletecontent?externalpath='+fFile+'&xrfkey='+@xrf
 
     puts https_url
     delete_generic(https_url)
