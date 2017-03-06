@@ -1,6 +1,9 @@
 require 'securerandom'
 require 'HTTPClient'
 require 'json'
+gem "rubyntlm", ">= 0.6.1" #I don't know for sure the minimum required, but the default is no good..
+require 'rubyntlm'
+
 #require 'tempfile'
 #require './qsrb/NetHttpStream'
 ##
@@ -50,20 +53,21 @@ class QlikSense
       client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
     end
     if !@user.nil? then
+        #We need to use windows auth, so do this
         @base_uri = @base_uri_qps
         client.set_auth(nil, @user, @pass)
         path = '/qrs/about'
         query = {'xrfkey' => @xrf}
         https_url = @base_uri+path
         t = client.get(https_url, query, @extheader, :follow_redirect => true)
-        pp @user, @pass, https_url
+        #pp @user, @pass, https_url
         redirect = t.http_header.request_uri.to_s
         r = client.get(redirect, query, @extheader, :follow_redirect => true)
-        pp "CONNECTED: ", t.status_code, t.body, r.status_code, r.body, redirect
+        #pp "CONNECTED: ", t.status_code, t.body, r.status_code, r.body, redirect
       else
         @base_uri = @base_uri_qrs
       end
-      puts @base_uri
+      #puts @base_uri+' BASE'
     return client
   end
   private :qsConn
@@ -117,7 +121,29 @@ class QlikSense
     end
     https_url =@base_uri+path
     if !param.nil?
-      if param == 'filter' then
+      if paramName == 'filter' then
+        query = {paramName => param+" "+op+" "+"'"+val+"'" , 'xrfkey' => @xrf}
+      else
+        query = {paramName => param, 'xrfkey' => @xrf}
+      end
+    else
+      query = {'xrfkey' => @xrf}
+    end
+    #puts https_url, query , @extheader
+    #puts query
+    r =  conn.get(https_url, query, @extheader)
+    #pp r
+  end
+  private :get_generic_param
+
+  def put_generic_param(path, paramName, param, op, val, body)
+    conn = qsConn()
+    if path[0] != '/' then
+      path = '/'+path
+    end
+    https_url =@base_uri+path+'?xrfkey='+@xrf
+    if !param.nil?
+      if paramName == 'filter' then
         query = {paramName => param+" "+op+" "+"'"+val+"'" , 'xrfkey' => @xrf}
       else
         query = {paramName => param, 'xrfkey' => @xrf}
@@ -126,10 +152,11 @@ class QlikSense
       query = {'xrfkey' => @xrf}
     end
     puts https_url, query , @extheader
-    puts
-    return conn.get(https_url, query, @extheader)
+    #puts query
+    r =  conn.put(https_url, body, @extheader)
+    #pp r
   end
-  private :get_generic_param
+  private :put_generic_param
 
   def delete_generic(https_url)
     conn = qsConn()
@@ -180,6 +207,10 @@ class QlikSense
 
   def get_user(param = nil, val = nil)
     return  get_generic_filter("qrs/user", param, 'eq', val).body
+  end
+
+  def get_user_full(param = nil, val = nil)
+    return  get_generic_filter("qrs/user/full", param, 'eq', val).body
   end
 
   # Connect to qlik sense as domainName\userName .  Will return 'about' info.
@@ -393,15 +424,35 @@ class QlikSense
 
   #Get information about the application content quota.
   def appcontentquota()
-    return get_generic('qrs/appcontentquota/ful').body
+    return get_generic('qrs/appcontentquota/full').body
   end
+
+  def setRole(userid, role)
+    usersJson =JSON.parse(get_user_full('userid', userid))
+    id= usersJson[0]["id"]
+    path = '/qrs/user/'+id
+    userJson=JSON.parse(get_generic(path).body)
+    userJson["roles"] = [role]
+    #userJson["name"] = "R_"+Time.new().to_s
+    body = JSON.generate(userJson)
+    return put_generic_param(path, nil, nil, nil, nil, body)
+  end
+
+  def addRole(userid, role)
+    usersJson =JSON.parse(get_user_full('userid', userid))
+    id= usersJson[0]["id"]
+    path = '/qrs/user/'+id
+    userJson=JSON.parse(get_generic(path).body)
+    userJson["roles"] = Array[role]+userJson["roles"]
+    body = JSON.generate(userJson)
+    return put_generic_param(path, nil, nil, nil, nil, body)
+  end
+
   # App content quota: Get
   # App content quota: Update
   # App: Get hub information
   # App: Get hub list
   # App: Get state
-  # App: Import app
-  # App: Make copy
   # App: Migrate
   # App: Publish
   # App: Reload
