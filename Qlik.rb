@@ -53,21 +53,27 @@ class QlikSense
       client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
     end
     if !@user.nil? then
-        #We need to use windows auth, so do this
-        @base_uri = @base_uri_qps
-        client.set_auth(nil, @user, @pass)
-        path = '/qrs/about'
-        query = {'xrfkey' => @xrf}
-        https_url = @base_uri+path
-        t = client.get(https_url, query, @extheader, :follow_redirect => true)
-        #pp @user, @pass, https_url
-        redirect = t.http_header.request_uri.to_s
-        r = client.get(redirect, query, @extheader, :follow_redirect => true)
-        #pp "CONNECTED: ", t.status_code, t.body, r.status_code, r.body, redirect
-      else
-        @base_uri = @base_uri_qrs
-      end
-      #puts @base_uri+' BASE'
+      #We need to use windows auth, so do this
+      @base_uri = @base_uri_qps
+      client.set_auth(nil, @user, @pass)
+      path = '/qrs/about'
+      query = {'xrfkey' => @xrf}
+      https_url = @base_uri+path
+      t = client.get(https_url, query, @extheader, :follow_redirect => true)
+      #pp @user, @pass, https_url
+      redirect = t.http_header.request_uri.to_s
+      r = client.get(redirect, query, @extheader, :follow_redirect => true)
+      #pp "CONNECTED: ", t.status_code, t.body, r.status_code, r.body, redirect
+    else
+      @base_uri = @base_uri_qrs
+    end
+    #puts @base_uri+' BASE'
+    client.receive_timeout = 30000
+    client.send_timeout = 30000
+    client.connect_timeout = 30000
+    client.keep_alive_timeout = 30000
+    client.ssl_config.timeout = 30000
+
     return client
   end
   private :qsConn
@@ -435,7 +441,7 @@ class QlikSense
     userJson["roles"] = [role]
     #userJson["name"] = "R_"+Time.new().to_s
     body = JSON.generate(userJson)
-    return put_generic_param(path, nil, nil, nil, nil, body)
+    return put_generic_param(path, nil, nil, nil, nil, body).body
   end
 
   def addRole(userid, role)
@@ -502,6 +508,9 @@ class QlikSense
   # Scheduler service: Get local scheduler service
   # Security rule audit: Get accessible objects
   # Security rule audit: Get audit export
+  def get_auditExport()
+    return get_generic('qrs/systemrule/security/audit/export').body
+  end
   # Security rule audit: Get audit rules
   # Security rule audit: Get audit preview
   # Security rule audit: Get audit rules matrix
